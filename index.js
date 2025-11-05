@@ -8,6 +8,11 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
 const TRACK_EMOJI = process.env.TRACK_EMOJI;
 
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Bot is alive!'));
+app.listen(PORT, () => console.log(`Keep-alive server running on port ${PORT}`));
+
 let TIER_CONFIG = [];
 
 try {
