@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder
 const dotenv = require('dotenv');
 const fs = require('fs');
 const express = require('express');
+const { start } = require('repl');
 
 
 dotenv.config();
@@ -42,7 +43,6 @@ const client = new Client({
     partials: ['MESSAGE', 'CHANNEL', 'REACTION'], 
 });
 
-// --- Data Management Functions ---
 
 function loadData() {
     try {
@@ -62,7 +62,6 @@ function saveData(data) {
     fs.writeFileSync('reactions.json', JSON.stringify(data, null, 4));
 }
 
-// --- Core Role Update Logic ---
 
 async function updateTierRole(member) {
     const userId = member.id;
@@ -73,7 +72,6 @@ async function updateTierRole(member) {
     let highestTierToApply = null;
     let currentTierName = 'None';
 
-    // 1. Determine the highest tier the user qualifies for
     for (const tier of TIER_CONFIG) {
         if (uniqueReactions >= tier.count) {
             highestTierToApply = tier;
@@ -85,7 +83,6 @@ async function updateTierRole(member) {
     const tierRoleIds = TIER_CONFIG.map(t => t.roleId);
     let rolesChanged = false;
 
-    // 2. Remove all old tier roles
     try {
         const rolesToRemove = member.roles.cache.filter(role => tierRoleIds.includes(role.id));
         if (rolesToRemove.size > 0) {
@@ -96,7 +93,6 @@ async function updateTierRole(member) {
         console.error(`Failed to remove old roles for user ${userId}:`, error.message);
     }
 
-    // 3. Apply the new highest tier role
     if (highestTierToApply) {
         if (!member.roles.cache.has(highestTierToApply.roleId)) {
             try {
@@ -256,38 +252,59 @@ client.on('interactionCreate', async interaction => {
 
     // --- /startreaction Command ---
     if (interaction.commandName === 'startreaction') {
-        const messageId = interaction.options.getString('messageid');
+        const providedId = interaction.options.getString('messageid');
 
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            const channel = interaction.channel;
-            const message = await channel.messages.fetch(messageId);
+            const guild = interaction.guild;
+            const channel = interaction.channel; 
+            let targetMessageId = providedId; 
+            let message; 
+            let targetChannel = channel; 
+
+            const resolvedChannel = await guild.channels.fetch(providedId).catch(() => null);
+
+            if (resolvedChannel && resolvedChannel.isThread()) {
+                const starterMessage = await resolvedChannel.messages.fetch(resolvedChannel.id).catch(() => null);
+
+                if (!starterMessage) {
+                    throw new Error(`Could not find the message`);
+                }
+
+                message = starterMessage;
+                targetMessageId = starterMessage.id; 
+                targetChannel = resolvedChannel;
+            } else {
+                message = await channel.messages.fetch(providedId);
+            }
+
+            if (!message) {
+                throw new Error(`Message or Thread with ID ${providedId} not found.`);
+            }
+
             await message.react(TRACK_EMOJI);
 
-            const allData = loadData();
-            if (!allData['tracked_messages']) {
-                allData['tracked_messages'] = [];
-            }
-            if (!allData['tracked_messages'].includes(messageId)) {
-                allData['tracked_messages'].push(messageId);
+            const allData = loadData(); 
+            if (!allData['tracked_messages'].includes(targetMessageId)) {
+                allData['tracked_messages'].push(targetMessageId);
                 saveData(allData);
             }
 
             const successEmbed = new EmbedBuilder()
-                .setColor(0x00FF00) // Green
-                .setTitle(`✅ Tracking Started`)
-                .setDescription(`Reactions on message \`${messageId}\` in ${channel} are now being tracked for the tier system.`)
+            .setColor(0x00FF00) 
+            .setTitle(`✅ Tracking Started`)
+            .setDescription(`Reactions on the **initial post/message** (ID: \`${targetMessageId}\`) in ${targetChannel} are now being tracked for the tier system.`)
                 .addFields(
                     { name: 'Tracking Emoji', value: TRACK_EMOJI, inline: true },
-                    { name: 'Target Message ID', value: `\`${messageId}\``, inline: true }
+                    { name: 'Target Message ID', value: `\`${targetMessageId}\``, inline: true }
                 )
                 .setTimestamp();
 
-            await interaction.editReply({ 
-                embeds: [successEmbed],
-                ephemeral: true 
-            });
+                await interaction.editReply({
+                    embeds: [successEmbed],
+                    ephemeral: true
+                });
 
         } catch (error) {
             console.error('Error in /startreaction:', error);
