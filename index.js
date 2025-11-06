@@ -105,12 +105,12 @@ async function updateTierRole(member) {
         }
     }
     
-    // Return status for the /checktier command
+    // Return status for the /checktier command or /resetuser
     return { uniqueReactions, currentTierName, rolesChanged };
 }
 
 
-// --- Client Events ---
+// --- Client Events (No changes needed here) ---
 
 client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
@@ -119,7 +119,7 @@ client.on('ready', async () => {
     client.user.setActivity("Skooma's Mod Emporium!", {type: ActivityType.Watching})
 });
 
-// Listener for the tracked reaction being added
+// Listener for the tracked reaction being added (No changes needed here)
 client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot || reaction.emoji.name !== TRACK_EMOJI) return;
 
@@ -160,6 +160,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
     }
 });
 
+// Listener for the tracked reaction being removed (No changes needed here)
 client.on('messageReactionRemove', async (reaction, user) => {
     if (user.bot || reaction.emoji.name !== TRACK_EMOJI) return;
 
@@ -201,15 +202,15 @@ client.on('messageReactionRemove', async (reaction, user) => {
 });
 
 
-// --- Slash Command Definitions (No Change) ---
+// --- Slash Command Definitions (UPDATED for /resetuser) ---
 
 const commands = [
     new SlashCommandBuilder()
         .setName('startreaction')
-        .setDescription('Starts tracking a message for the tier system and reacts with the tracking emoji.')
+        .setDescription('Starts tracking a message or a forum post for the tier system.')
         .addStringOption(option =>
             option.setName('messageid')
-                .setDescription('The ID of the message to start tracking.')
+                .setDescription('The ID of the message or Forum Post/Thread ID to start tracking.')
                 .setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
         .toJSON(),
@@ -226,6 +227,21 @@ const commands = [
                 .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles) 
         .toJSON(),
+    // NEW COMMAND DEFINITION
+    new SlashCommandBuilder()
+        .setName('resetuser')
+        .setDescription('Resets or reduces the unique reaction count for a user.')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('The user whose reactions will be modified.')
+                .setRequired(true))
+        .addIntegerOption(option =>
+            option.setName('amount')
+                .setDescription('The number of unique reactions to remove (optional; defaults to all).')
+                .setRequired(false)
+                .setMinValue(1))
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+        .toJSON(),
 ];
 
 async function registerCommands() {
@@ -234,18 +250,22 @@ async function registerCommands() {
     try {
         console.log('Started refreshing application (/) commands.');
 
+        // Assuming client.application.id is available, otherwise this will fail.
+        // It's usually safe after client.on('ready').
+        const appId = client.application.id;
+
         await rest.put(
-            Routes.applicationGuildCommands(client.application.id, GUILD_ID),
+            Routes.applicationGuildCommands(appId, GUILD_ID),
             { body: commands },
         );
 
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
-        console.error(error);
+        console.error("Error refreshing application commands:", error);
     }
 }
 
-// --- Slash Command Handler (Updated to use Embeds) ---
+// --- Slash Command Handler (UPDATED for /resetuser) ---
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
@@ -263,19 +283,21 @@ client.on('interactionCreate', async interaction => {
             let message; 
             let targetChannel = channel; 
 
+            // 1. Check if the provided ID is a Thread Channel ID (e.g., from a Forum Post)
             const resolvedChannel = await guild.channels.fetch(providedId).catch(() => null);
 
             if (resolvedChannel && resolvedChannel.isThread()) {
                 const starterMessage = await resolvedChannel.messages.fetch(resolvedChannel.id).catch(() => null);
 
                 if (!starterMessage) {
-                    throw new Error(`Could not find the message`);
+                    throw new Error(`Could not find the initial post message for ID ${providedId}`);
                 }
 
                 message = starterMessage;
                 targetMessageId = starterMessage.id; 
                 targetChannel = resolvedChannel;
             } else {
+                // 2. Otherwise, treat it as a regular message ID in the current channel.
                 message = await channel.messages.fetch(providedId);
             }
 
@@ -286,6 +308,9 @@ client.on('interactionCreate', async interaction => {
             await message.react(TRACK_EMOJI);
 
             const allData = loadData(); 
+            if (!allData['tracked_messages']) {
+                allData['tracked_messages'] = [];
+            }
             if (!allData['tracked_messages'].includes(targetMessageId)) {
                 allData['tracked_messages'].push(targetMessageId);
                 saveData(allData);
@@ -312,9 +337,9 @@ client.on('interactionCreate', async interaction => {
             const errorEmbed = new EmbedBuilder()
                 .setColor(0xFF0000) // Red
                 .setTitle(`❌ Tracking Failed`)
-                .setDescription(`Could not start tracking for message ID \`${messageId}\`.`)
+                .setDescription(`Could not start tracking for ID \`${providedId}\`.`)
                 .addFields(
-                    { name: 'Reason', value: 'Make sure the ID is correct and the message is in this channel, or the bot has necessary permissions (Read Message History, Add Reactions).' }
+                    { name: 'Reason', value: 'Make sure the ID is correct, the message is fetchable, and the bot has necessary permissions (Read Message History, Add Reactions).' }
                 )
                 .setTimestamp();
 
@@ -401,6 +426,78 @@ client.on('interactionCreate', async interaction => {
             .setFooter({ text: `Checked by ${interaction.user.tag}` });
 
         await interaction.editReply({ embeds: [checkEmbed], ephemeral: true });
+    // --- /resetuser Command (NEW) ---
+    } else if (interaction.commandName === 'resetuser') {
+        await interaction.deferReply({ ephemeral: true });
+        
+        const targetUser = interaction.options.getUser('user');
+        const amountToRemove = interaction.options.getInteger('amount');
+        const guild = interaction.guild;
+
+        if (!guild) {
+             return await interaction.editReply({ 
+                embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription('This command must be run inside a server.')],
+                ephemeral: true
+            });
+        }
+
+        const member = await guild.members.fetch(targetUser.id).catch(() => null);
+
+        if (!member) {
+            return await interaction.editReply({ 
+                embeds: [new EmbedBuilder().setColor(0xFF0000).setDescription(`Could not find member ${targetUser.tag} in this server.`)],
+                ephemeral: true
+            });
+        }
+
+        const allData = loadData();
+        const userData = allData[targetUser.id];
+        const originalCount = userData ? Object.keys(userData).length : 0;
+        let finalCount = originalCount;
+        let actionDescription = "";
+
+        if (originalCount === 0) {
+            actionDescription = `User ${targetUser.tag} currently has 0 unique reactions. No action needed.`;
+        } else if (!amountToRemove || amountToRemove >= originalCount) {
+            // Full reset
+            delete allData[targetUser.id];
+            finalCount = 0;
+            actionDescription = `Successfully **removed all** ${originalCount} unique reactions.`;
+        } else {
+            // Partial removal
+            const messageIds = Object.keys(userData);
+            // Get a random selection of IDs to delete
+            const idsToDelete = messageIds.sort(() => 0.5 - Math.random()).slice(0, amountToRemove);
+            
+            for (const id of idsToDelete) {
+                delete userData[id];
+            }
+            
+            // Save the modified data
+            allData[targetUser.id] = userData;
+            finalCount = Object.keys(userData).length;
+            actionDescription = `Successfully **removed ${amountToRemove}** unique reactions.`;
+        }
+        
+        saveData(allData);
+
+        // Force a role update based on the new count
+        const { currentTierName } = await updateTierRole(member);
+
+        const resetEmbed = new EmbedBuilder()
+            .setColor(0x3498DB) // Blue
+            .setTitle(`♻️ Reaction Count Modified`)
+            .setDescription(actionDescription)
+            .addFields(
+                { name: 'Target User', value: targetUser.tag, inline: true },
+                { name: 'Original Count', value: `${originalCount}`, inline: true },
+                { name: 'New Count', value: `${finalCount}`, inline: true },
+                { name: 'Current Tier', value: currentTierName, inline: false }
+            )
+            .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [resetEmbed], ephemeral: true });
     }
 });
 
