@@ -140,7 +140,7 @@ client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     await registerCommands();
 
-    client.user.setActivity("Skooma's Mod Emporium!", {type: ActivityType.Watching})
+    client.user.setActivity("<:verified:1436056114952409139> Skooma's Mod Emporium!", {type: ActivityType.Watching})
 });
 
 // Listener for the tracked reaction being added (No changes needed here)
