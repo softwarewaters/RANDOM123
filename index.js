@@ -4,6 +4,9 @@ const fs = require('fs');
 const express = require('express');
 const { start } = require('repl');
 
+// Import the OS module to get server/system info
+const os = require('os');
+const { version: discordjsVersion } = require('discord.js'); // Import discord.js version
 
 dotenv.config();
 
@@ -109,6 +112,27 @@ async function updateTierRole(member) {
     return { uniqueReactions, currentTierName, rolesChanged };
 }
 
+/**
+ * Converts milliseconds to a human-readable string (D days, H hours, M minutes, S seconds).
+ * @param {number} ms Milliseconds.
+ * @returns {string} Formatted uptime string.
+ */
+function formatUptime(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const seconds = totalSeconds % 60;
+    const minutes = Math.floor(totalSeconds / 60) % 60;
+    const hours = Math.floor(totalSeconds / 3600) % 24;
+    const days = Math.floor(totalSeconds / 86400);
+
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`); // Ensure at least seconds are shown
+
+    return parts.join(' ');
+}
+
 
 // --- Client Events (No changes needed here) ---
 
@@ -202,9 +226,10 @@ client.on('messageReactionRemove', async (reaction, user) => {
 });
 
 
-// --- Slash Command Definitions (UPDATED for /resetuser) ---
+// --- Slash Command Definitions (UPDATED for /ping and /startreaction permission) ---
 
 const commands = [
+    // UPDATED PERMISSION
     new SlashCommandBuilder()
         .setName('startreaction')
         .setDescription('Starts tracking a message or a forum post for the tier system.')
@@ -212,7 +237,7 @@ const commands = [
             option.setName('messageid')
                 .setDescription('The ID of the message or Forum Post/Thread ID to start tracking.')
                 .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator) // LOCKED TO ADMINISTRATOR
         .toJSON(),
     new SlashCommandBuilder()
         .setName('stats')
@@ -227,7 +252,6 @@ const commands = [
                 .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles) 
         .toJSON(),
-    // NEW COMMAND DEFINITION
     new SlashCommandBuilder()
         .setName('resetuser')
         .setDescription('Resets or reduces the unique reaction count for a user.')
@@ -241,6 +265,11 @@ const commands = [
                 .setRequired(false)
                 .setMinValue(1))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+        .toJSON(),
+    // NEW /ping COMMAND
+    new SlashCommandBuilder()
+        .setName('ping')
+        .setDescription('Shows the bot\'s latency, uptime, resource usage, and versions.')
         .toJSON(),
 ];
 
@@ -265,13 +294,42 @@ async function registerCommands() {
     }
 }
 
-// --- Slash Command Handler (UPDATED for /resetuser) ---
+// --- Slash Command Handler (UPDATED for /ping) ---
 
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
+    // --- /ping Command (NEW) ---
+    if (interaction.commandName === 'ping') {
+        const memoryData = process.memoryUsage();
+        
+        // Convert bytes to MB and format with 2 decimal places
+        const formatMemory = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+
+        const pingEmbed = new EmbedBuilder()
+            .setColor(0x3498DB)
+            .setTitle('📶 Bot Status & Diagnostics')
+            .addFields(
+                { name: '🌐 Latency (Websocket)', value: `\`${interaction.client.ws.ping}ms\``, inline: true },
+                { name: '⏳ Uptime', value: `\`${formatUptime(interaction.client.uptime)}\``, inline: true },
+                { name: '\u200B', value: '\u200B', inline: true }, // Spacer
+                { name: '💾 Memory (Heap Used)', value: `\`${formatMemory(memoryData.heapUsed)} MB\``, inline: true },
+                { name: '🧠 Memory (RSS)', value: `\`${formatMemory(memoryData.rss)} MB\``, inline: true },
+                { name: '💻 Server Uptime', value: `\`${formatUptime(os.uptime() * 1000)}\``, inline: true },
+                { name: '🟢 Node.js Version', value: `\`${process.version}\``, inline: true },
+                { name: '🤖 discord.js Version', value: `\`v${discordjsVersion.split('.')[0]}\``, inline: true },
+                { name: '\u200B', value: '\u200B', inline: true } // Spacer
+            )
+            .setTimestamp();
+
+        await interaction.reply({ 
+            embeds: [pingEmbed], 
+            ephemeral: false // Usually visible to everyone
+        });
+    }
+
     // --- /startreaction Command ---
-    if (interaction.commandName === 'startreaction') {
+    else if (interaction.commandName === 'startreaction') {
         const providedId = interaction.options.getString('messageid');
 
         await interaction.deferReply({ ephemeral: true });
