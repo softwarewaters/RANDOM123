@@ -140,7 +140,18 @@ client.on('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
     await registerCommands();
 
-    client.user.setActivity("Skooma's Mod Emporium!", {type: ActivityType.Watching})
+    const statuses = [
+        { text: "Skooma's Mod Emporium!", type: ActivityType.Watching },
+        { text: "Released v1.0.0", type: ActivityType.Playing },
+    ];
+
+    let index = 0;
+
+    setInterval(() => {
+        const status = statuses[index];
+        client.user.setActivity(status.text, { type: status.type });
+        index = (index + 1) % statuses.length;
+    }, 5000); // change every 5 seconds
 });
 
 // Listener for the tracked reaction being added (No changes needed here)
@@ -264,7 +275,7 @@ const commands = [
                 .setDescription('The number of unique reactions to remove (optional; defaults to all).')
                 .setRequired(false)
                 .setMinValue(1))
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .toJSON(),
     // NEW /ping COMMAND
     new SlashCommandBuilder()
