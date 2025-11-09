@@ -136,23 +136,61 @@ function formatUptime(ms) {
 
 // --- Client Events (No changes needed here) ---
 
-client.on('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}!`);
-    await registerCommands();
+client.once('ready', async () => {
+    console.log(`✅ Logged in as ${client.user.tag}!`);
 
+    try {
+        // Ensure client.application is fetched (required for app ID)
+        await client.application.fetch();
+
+        // Register slash commands AFTER app is fetched and bot is confirmed in guild
+        await registerCommands();
+
+        console.log('✅ Successfully registered application (/) commands.');
+
+    } catch (error) {
+        console.error('❌ Failed to register commands:', error);
+    }
+
+    // --- Status cycling ---
     const statuses = [
         { text: "Skooma's Mod Emporium!", type: ActivityType.Watching },
         { text: "Released v1.0.0", type: ActivityType.Playing },
     ];
 
     let index = 0;
-
     setInterval(() => {
         const status = statuses[index];
         client.user.setActivity(status.text, { type: status.type });
         index = (index + 1) % statuses.length;
-    }, 5000); // change every 5 seconds
+    }, 5000);
 });
+
+async function registerCommands() {
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    const appId = client.application.id;
+
+    try {
+        console.log(`🚀 Registering slash commands for guild ${GUILD_ID}...`);
+
+        // Make sure the bot is actually in that guild
+        const guild = client.guilds.cache.get(GUILD_ID);
+        if (!guild) {
+            console.warn(`⚠️ The bot is NOT in the guild with ID ${GUILD_ID}. Skipping registration.`);
+            return;
+        }
+
+        await rest.put(
+            Routes.applicationGuildCommands(appId, GUILD_ID),
+            { body: commands },
+        );
+
+        console.log('✅ Slash commands registered successfully!');
+    } catch (error) {
+        console.error('❌ Error refreshing application commands:', error);
+    }
+}
+
 
 // Listener for the tracked reaction being added (No changes needed here)
 client.on('messageReactionAdd', async (reaction, user) => {
